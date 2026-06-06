@@ -19,9 +19,14 @@ export class Kernel {
   readonly bootTime = Date.now();
 
   private print: PrintFn = () => {};
+  private tickCount = 0;
 
   constructor() {
-    this.syscall = new Syscall(this.fs, this.sched, this.memory);
+    this.syscall = new Syscall(this.fs, this.sched, this.memory, () => this.tickCount);
+  }
+
+  getTicks(): number {
+    return this.tickCount;
   }
 
   async boot(print: PrintFn): Promise<number> {
@@ -47,7 +52,7 @@ export class Kernel {
     });
 
     // 5. interrupts
-    this.irq.register(InterruptType.TIMER, () => {});
+    this.irq.register(InterruptType.TIMER, () => { this.tickCount++; });
     this.irq.start();
 
     // 6. init process (PID=1)

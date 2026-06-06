@@ -43,6 +43,10 @@ export class MemoryManager {
     };
   }
 
+  getPageMap(): number[] {
+    return Array.from(this.pageTable);
+  }
+
   getView(): Uint8Array {
     return new Uint8Array(this.pool);
   }

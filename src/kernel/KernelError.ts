@@ -14,6 +14,7 @@ export const ENOTDIR = 20; // Not a directory
 export const EISDIR = 21;  // Is a directory
 export const EINVAL = 22;  // Invalid argument
 export const ENOSPC = 28;  // No space left on device
+export const EMLINK = 31;  // Too many links
 
 const errnoMessages: Record<number, string> = {
   [EPERM]:   'Operation not permitted',
@@ -28,6 +29,7 @@ const errnoMessages: Record<number, string> = {
   [EISDIR]:  'Is a directory',
   [EINVAL]:  'Invalid argument',
   [ENOSPC]:  'No space left on device',
+  [EMLINK]:  'Too many links',
 };
 
 export class KernelError extends Error {

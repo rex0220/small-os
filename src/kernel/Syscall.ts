@@ -24,6 +24,8 @@ export enum SYS {
   GETCWD  = 13,
   MEMINFO = 14,
   PS      = 15,
+  MEMMAP  = 16,
+  UPTIME  = 17,
 }
 
 export class Syscall {
@@ -31,6 +33,7 @@ export class Syscall {
     private readonly fs:     FileSystem,
     private readonly sched:  Scheduler,
     private readonly memory: MemoryManager,
+    private readonly getTicks: () => number = () => 0,
   ) {}
 
   async call(pid: number, num: number, args: unknown[]): Promise<SyscallResult> {
@@ -44,9 +47,16 @@ export class Syscall {
   }
 
   private handlePs() {
-    return this.sched.list().map(p => {
-      return { pid: p.pid, ppid: p.ppid, name: p.name, state: p.state, cpu: p.cpuTime, start: p.startTime };
-    });
+    const now = Date.now();
+    return this.sched.list().map(p => ({
+      pid: p.pid,
+      ppid: p.ppid,
+      name: p.name,
+      state: p.state,
+      cpu: p.cpuTime,
+      start: p.startTime,
+      elapsed: Math.floor((now - p.startTime) / 1000),
+    }));
   }
 
   private async handleExit(pid: number, code: number): Promise<void> {
@@ -81,6 +91,8 @@ export class Syscall {
       case SYS.GETCWD:  return this.fs.buildPath(cwd);
       case SYS.MEMINFO: return this.memory.getUsage();
       case SYS.PS:      return this.handlePs();
+      case SYS.MEMMAP:  return this.memory.getPageMap();
+      case SYS.UPTIME:  return { ticks: this.getTicks(), ms: this.getTicks() * 50 };
       default:          throw Object.assign(new Error('Unknown syscall: ' + num), { errno: 22 });
     }
   }

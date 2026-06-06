@@ -14,6 +14,7 @@ export class Scheduler {
   private readyQueue: number[] = [];
   private pidCounter = 1;
   private memory!:   MemoryManager;
+  private skipNext   = new Set<number>();
 
   private onSyscall: SyscallHandler = async () => ({ ok: false, errno: 22, message: 'not connected' });
   private onStdout:  StdoutHandler  = () => {};
@@ -92,6 +93,7 @@ export class Scheduler {
   handleYield(pid: number): void {
     const pcb = this.table.get(pid);
     if (!pcb || pcb.state === 'zombie') return;
+    console.log(`[Scheduler] PID ${pid}: running → ready`);
     pcb.state = 'ready';
     this.readyQueue.push(pid);
     this.scheduleNext();
@@ -102,6 +104,15 @@ export class Scheduler {
     if (nextPid == null) return;
     const pcb = this.table.get(nextPid);
     if (!pcb || pcb.state === 'zombie') { this.scheduleNext(); return; }
+
+    if (pcb.priority >= 10 && this.skipNext.has(nextPid)) {
+      this.skipNext.delete(nextPid);
+      this.readyQueue.push(nextPid);
+      this.scheduleNext();
+      return;
+    }
+    if (pcb.priority >= 10) this.skipNext.add(nextPid);
+
     pcb.state = 'running';
     pcb.worker.postMessage({ type: 'resume' } satisfies WorkerMessage);
   }

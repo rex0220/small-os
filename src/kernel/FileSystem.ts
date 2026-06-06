@@ -2,10 +2,11 @@
 // FileSystem -- inode-based VFS / max 1000 inodes / localStorage
 // CWD per process (PCB.cwd). FD ownership enforced per PID.
 // ============================================================
-import { ENOENT, EEXIST, ENOTDIR, EISDIR, ENOSPC, EBADF, KernelError } from './KernelError';
+import { ENOENT, EEXIST, ENOTDIR, EISDIR, ENOSPC, EBADF, EMLINK, KernelError } from './KernelError';
 import type { Inode, DirEntry, FileDescriptor, OpenFlag } from '../types';
 
 const MAX_INODES = 1000;
+const MAX_DIR_ENTRIES = 10;
 const LS_KEY     = 'small-os-fs-v1';
 
 interface FsSnapshot {
@@ -53,10 +54,11 @@ export class FileSystem {
     if (!inode && flags === 0) throw new KernelError(ENOENT, path);
     let id = inode?.id ?? 0;
     if (!inode) {
+      const parent = this.parentDir(path, cwd);
+      this.ensureDirectoryCapacity(parent, path);
       id = this.allocInode();
       const now = Date.now();
       this.inodes.set(id, { id, type: 'file', size: 0, created: now, modified: now, data: '', nlink: 1 });
-      const parent = this.parentDir(path, cwd);
       parent.push({ name: basename(path), inode: id });
       this.persist();
     }
@@ -116,6 +118,7 @@ export class FileSystem {
     if (parentInode.type !== 'dir') throw new KernelError(ENOTDIR, parentPath);
     const parentEntries = this.dirs.get(parentInode.id);
     if (!parentEntries) throw new KernelError(ENOENT, parentPath);
+    this.ensureDirectoryCapacity(parentEntries, path);
     const id  = this.allocInode();
     const now = Date.now();
     this.inodes.set(id, { id, type: 'dir', size: 0, created: now, modified: now, data: '', nlink: 2 });
@@ -196,6 +199,11 @@ export class FileSystem {
     if (!desc) throw new KernelError(EBADF);
     if (pid !== 0 && desc.pid !== pid) throw new KernelError(EBADF);
     return desc;
+  }
+
+  private ensureDirectoryCapacity(entries: DirEntry[], path: string): void {
+    const userEntries = entries.filter(e => e.name !== '.' && e.name !== '..');
+    if (userEntries.length >= MAX_DIR_ENTRIES) throw new KernelError(EMLINK, path);
   }
 
   private resolve(path: string, cwd: number): Inode | undefined {
