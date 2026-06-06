@@ -4,7 +4,8 @@
 
 **動く OS を触りながら理解する（トップダウン）**
 
-ゼロから実装するのではなく、すでに動作している small OS のコードを読み、変更し、壊して直す過程で OS の概念を体得する。MIT の xv6 と同じアプローチ。
+ゼロから OS を実装するのではなく、すでに動作している small OS のコードを読み、変更し、壊して直す過程で、Web エンジニアが OS の基本概念を体験的に理解する。
+MIT の xv6 と同じく「動く教材を読みながら学ぶ」アプローチだが、題材はブラウザーと TypeScript に寄せている。
 
 ---
 
@@ -53,6 +54,7 @@ try {
 
 `FileSystem` / `Scheduler` / `MemoryManager` の private フィールドを直接読む課題は、原則として「カーネル内部を拡張する課題」に置き換えます。
 内部構造を観察したい場合も、public メソッドまたは新しい `SYS` 番号を追加して、境界を保ったままシェルから呼び出します。
+コマンドの入力エラーは `throw new Error(...)` に寄せ、`Pipeline` 側で表示されるシェルエラーとして扱います。
 
 ---
 
@@ -82,6 +84,10 @@ npm run dev
 ## Module 0：環境確認・全体把握
 
 **目標**: small OS を起動し、全コマンドを触ってソースの構造を把握する
+
+この Module では、まず small OS を起動してターミナル操作に慣れる。
+次にリロード後もファイルが残ることを確認し、localStorage 永続化を観察する。
+最後に `main.ts` から起動シーケンスを追い、全体像をつかむ。
 
 ### 手順
 
@@ -116,6 +122,10 @@ free
 **目標**: シェル〜Syscall の流れを追い、新しいコマンドを実装する
 
 **学ぶ概念**: ユーザー空間 / カーネル空間の分離、システムコール
+
+この Module では、既存のコマンド実装を読み、新しいコマンドを追加する。
+`sys.call(SYS.XXX, ...)` を使って、ユーザー空間からカーネル機能を呼び出す流れを確認する。
+最後に `wc` を実装し、FD を開く・読む・閉じる一連の操作を体験する。
 
 ### 課題 1-A：`date` コマンドを追加する（入門）
 
@@ -164,7 +174,7 @@ $ wc test.txt
 
 ```typescript
 commands.set('wc', async (args, _stdin, sys) => {
-  if (!args[0]) return 'wc: missing operand';
+  if (!args[0]) throw new Error('wc: missing operand');
 
   const fd = await sys.call(SYS.OPEN, args[0], OpenFlag.READ) as number;
   try {
@@ -194,6 +204,10 @@ commands.set('wc', async (args, _stdin, sys) => {
 
 **学ぶ概念**: inode、ディレクトリエントリ、ハードリンク、パス解決
 
+この Module では、ファイル名と inode が分かれていることを確認する。
+まず `istat` コマンドで inode を表示し、次に `rm` 後の挙動を観察する。
+最後にディレクトリの上限を追加して、ファイルシステムの制約を体験する。
+
 ### 課題 2-A：`istat` コマンドを実装する
 
 inode の生データを表示するデバッグコマンド。
@@ -219,7 +233,7 @@ modified: 2026-06-06 10:00:00
 
 ```typescript
 commands.set('istat', async (args, _stdin, sys) => {
-  if (!args[0]) return 'istat: missing operand';
+  if (!args[0]) throw new Error('istat: missing operand');
 
   const inode = await sys.call(SYS.STAT, args[0]) as Inode;
   const fmt = (ts: number) => new Date(ts).toLocaleString('ja-JP');
@@ -293,6 +307,10 @@ if (userEntries2.length >= MAX_DIR_ENTRIES)
 **目標**: PCB・プロセス状態遷移・スケジューリングを理解する
 
 **学ぶ概念**: PCB、running/ready/waiting/zombie、ラウンドロビン
+
+この Module では、`ps` の表示を拡張しながら PCB の中身を読む。
+次に `yield` / `resume` のログを見て、協調的スケジューリングの状態遷移を観察する。
+最後に優先度の扱いを追加し、スケジューラーの方針を変える練習をする。
 
 ### 課題 3-A：`ps` の出力を拡張する
 
@@ -415,6 +433,10 @@ export class Scheduler {
 **目標**: ページング・断片化・OOM（Out of Memory）を体感する
 
 **学ぶ概念**: ページング、断片化、スワップなしの制約
+
+この Module では、64KB の物理メモリを 4KB ページとして観察する。
+`free` と `memmap` で使用ページを可視化し、最後に `stress` で意図的に OOM を起こす。
+メモリが有限で、プロセス生成にもコストがあることを体感する。
 
 ### 課題 4-A：`free` コマンドの出力を詳細化する
 
@@ -544,6 +566,10 @@ commands.set('stress', async (args, _stdin, sys) => {
 
 **学ぶ概念**: 割り込み駆動、ポーリング、タイマー割り込み
 
+この Module では、まず `irq.start()` を止めて現状の挙動を確認する。
+現在の TIMER ハンドラーは拡張用なので、止めてもコマンド実行や協調スケジューリングには影響しない。
+その後 `uptime` を実装し、タイマー割り込みを観察可能な機能へ育てる。
+
 ### 課題 5-A：タイマー割り込みを無効化する
 
 `kernel/index.ts` の `irq.start()` をコメントアウトして起動してみる。
@@ -631,7 +657,9 @@ commands.set('uptime', async (_args, _stdin, sys) => {
 
 ### 確認ポイント
 
-- タイマー割り込みを止めるとスケジューラーはどう変わるか？
+- 現状では TIMER ハンドラーが空なので、`irq.start()` を止めてもスケジューリングには影響しないことを確認する
+- タイマーハンドラーを実装すると、どのような機能を作れるか？
+- 協調方式とプリエンプティブ方式の違いは？
 - ポーリング方式（`while(true)` でチェック）と割り込み方式の違いは？
 
 ---
@@ -640,10 +668,19 @@ commands.set('uptime', async (_args, _stdin, sys) => {
 
 **目標**: ここまでの理解を組み合わせて自分のアイデアを実装する
 
+この Module では、小さな成功体験を作る課題から、複数モジュールをまたぐ拡張まで自由に選ぶ。
+最初は 1 ファイルで完結するコマンドから始めるとよい。
+慣れてきたら FileSystem、Scheduler、Pipeline を組み合わせる課題に進む。
+
 ### 推奨テーマ
 
 | テーマ | 難易度 | 関連モジュール |
 |--------|--------|--------------|
+| `whoami` コマンド | ☆☆☆ | commands/index.ts |
+| `uname` コマンド | ☆☆☆ | commands/index.ts |
+| `pwd` の表示形式変更 | ☆☆☆ | commands/index.ts |
+| `free --json` | ★☆☆ | commands/index.ts |
+| `tree` コマンド | ★☆☆ | FileSystem |
 | `history` コマンド（コマンド履歴の永続化） | ★☆☆ | Shell + localStorage |
 | `cp` コマンド（ファイルコピー） | ★☆☆ | FileSystem |
 | `grep` コマンド（文字列検索） | ★☆☆ | Shell + Pipeline |

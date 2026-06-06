@@ -133,7 +133,7 @@ free                     # メモリ使用状況
 ```typescript
 // cat コマンドの実装（抜粋）
 commands.set('cat', async (args, _stdin, sys) => {
-  if (!args[0]) return 'cat: missing operand';
+  if (!args[0]) throw new Error('cat: missing operand');
 
   const fd = await sys.call(SYS.OPEN, args[0], OpenFlag.READ) as number;
   try {
@@ -164,7 +164,7 @@ commands.set('date', async () => new Date().toLocaleString('ja-JP'));
 
 ```typescript
 commands.set('wc', async (args, _stdin, sys) => {
-  if (!args[0]) return 'wc: missing operand';
+  if (!args[0]) throw new Error('wc: missing operand');
 
   const fd = await sys.call(SYS.OPEN, args[0], OpenFlag.READ) as number;
   try {
@@ -220,7 +220,7 @@ interface Inode {
 
 ```typescript
 commands.set('istat', async (args, _stdin, sys) => {
-  if (!args[0]) return 'istat: missing operand';
+  if (!args[0]) throw new Error('istat: missing operand');
 
   const stat = await sys.call(SYS.STAT, args[0]) as Inode;
   return [
