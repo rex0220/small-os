@@ -44,8 +44,11 @@ Module 6  自由課題                    （3〜5日）
 ```typescript
 // OK: ユーザー空間から syscall 経由で読む
 const fd = await sys.call(SYS.OPEN, 'memo.txt', OpenFlag.READ) as number;
-const text = await sys.call(SYS.READ, fd) as string;
-await sys.call(SYS.CLOSE, fd);
+try {
+  const text = await sys.call(SYS.READ, fd) as string;
+} finally {
+  await sys.call(SYS.CLOSE, fd);
+}
 ```
 
 `FileSystem` / `Scheduler` / `MemoryManager` の private フィールドを直接読む課題は、原則として「カーネル内部を拡張する課題」に置き換えます。
@@ -134,6 +137,17 @@ helloworld
 
 `commands/index.ts` の `echo` コマンドを改造する。
 
+#### 実装例
+
+`src/shell/commands/index.ts`:
+
+```typescript
+commands.set('echo', async (args) => {
+  if (args[0] === '-n') return args.slice(1).join(' ');
+  return args.join(' ');
+});
+```
+
 ### 課題 1-C：`wc` コマンドを実装する（行数・文字数カウント）
 
 ```
@@ -143,6 +157,29 @@ $ wc test.txt
 ```
 
 `cat` コマンドの実装を参考に `sys.call(SYS.OPEN)` → `sys.call(SYS.READ)` → `sys.call(SYS.CLOSE)` の流れを理解する。
+
+#### 実装例
+
+`src/shell/commands/index.ts`:
+
+```typescript
+commands.set('wc', async (args, _stdin, sys) => {
+  if (!args[0]) return 'wc: missing operand';
+
+  const fd = await sys.call(SYS.OPEN, args[0], OpenFlag.READ) as number;
+  try {
+    const text = await sys.call(SYS.READ, fd) as string;
+    const lines = text.split('\n').length;
+    const words = text.trim().split(/\s+/).filter(Boolean).length;
+    const bytes = new TextEncoder().encode(text).length;
+    return `${lines} ${words} ${bytes} ${args[0]}`;
+  } finally {
+    await sys.call(SYS.CLOSE, fd);
+  }
+});
+```
+
+> **注意**: `CmdFn` の型は `(args, stdin, sys, term)` の順。`sys` を2番目に書くと `stdin`（文字列）が渡り `sys.call is not a function` エラーになる。
 
 ### 確認ポイント
 
@@ -176,6 +213,27 @@ modified: 2026-06-06 10:00:00
 `inodes` は private フィールドなので直接参照はしない。
 これが「Syscall 境界」の学習ポイントでもある。
 
+#### 実装例
+
+`src/shell/commands/index.ts`:
+
+```typescript
+commands.set('istat', async (args, _stdin, sys) => {
+  if (!args[0]) return 'istat: missing operand';
+
+  const inode = await sys.call(SYS.STAT, args[0]) as Inode;
+  const fmt = (ts: number) => new Date(ts).toLocaleString('ja-JP');
+  return [
+    'inode:    ' + inode.id,
+    'type:     ' + inode.type,
+    'size:     ' + inode.size,
+    'links:    ' + inode.nlink,
+    'created:  ' + fmt(inode.created),
+    'modified: ' + fmt(inode.modified),
+  ].join('\n');
+});
+```
+
 ### 課題 2-B：`rm` 後に inode が解放されているか確認する
 
 ```
@@ -193,6 +251,34 @@ $ istat b.txt        # ENOENT になるか？
 
 ```
 mkdir: /test/11th: Too many links
+```
+
+#### 実装例
+
+`src/kernel/KernelError.ts` に EMLINK を追加:
+
+```typescript
+export const EMLINK  = 31;  // Too many links
+// errnoMessages にも追加:
+[EMLINK]: 'Too many links',
+```
+
+`src/kernel/FileSystem.ts` の import に `EMLINK` を追加し、`mkdir()` と `open()` に制限チェックを追加:
+
+```typescript
+import { ENOENT, EEXIST, ENOTDIR, EISDIR, ENOSPC, EBADF, EMLINK, KernelError } from './KernelError';
+
+const MAX_DIR_ENTRIES = 10;
+
+// mkdir() の parentEntries.push(...) の直前に挿入
+const userEntries = parentEntries.filter(e => e.name !== '.' && e.name !== '..');
+if (userEntries.length >= MAX_DIR_ENTRIES)
+  throw new KernelError(EMLINK, path);
+
+// open() の新規ファイル作成時、parent.push(...) の直前にも同様に挿入
+const userEntries2 = parent.filter(e => e.name !== '.' && e.name !== '..');
+if (userEntries2.length >= MAX_DIR_ENTRIES)
+  throw new KernelError(EMLINK, path);
 ```
 
 ### 確認ポイント
@@ -222,6 +308,40 @@ PID  PPID  STATE    CPU_MS  ELAPSED  NAME
 `Scheduler.ts` の `list()` と `PCB` の `startTime` / `cpuTime` フィールドを参照する。
 コマンド側からは `sys.call(SYS.PS)` で取得し、`Syscall.ts` の `PS` 処理で返す情報を増やす。
 
+#### 実装例
+
+`src/kernel/Syscall.ts` の `handlePs()` を修正:
+
+```typescript
+private handlePs() {
+  const now = Date.now();
+  return this.sched.list().map(p => ({
+    pid: p.pid, ppid: p.ppid, name: p.name, state: p.state,
+    cpu: p.cpuTime, start: p.startTime,
+    elapsed: Math.floor((now - p.startTime) / 1000),
+  }));
+}
+```
+
+`src/shell/commands/index.ts` の `ps` コマンドを修正:
+
+```typescript
+commands.set('ps', async (_args, _stdin, sys) => {
+  type PsRow = { pid: number; ppid: number; name: string; state: string; cpu: number; elapsed: number };
+  const list = await sys.call(SYS.PS) as PsRow[];
+  const header = 'PID  PPID  STATE    CPU_MS  ELAPSED  NAME';
+  const rows = list.map(p =>
+    String(p.pid).padEnd(5) +
+    String(p.ppid).padEnd(6) +
+    p.state.padEnd(9) +
+    String(p.cpu).padEnd(8) +
+    (p.elapsed + 's').padEnd(9) +
+    p.name
+  );
+  return [header, ...rows].join('\n');
+});
+```
+
 ### 課題 3-B：プロセス状態遷移を観察する
 
 `Scheduler.ts` の `handleYield()` にログを追加して、プロセスがどのタイミングで `running` → `ready` → `running` を繰り返すかをコンソールで確認する。
@@ -231,10 +351,57 @@ PID  PPID  STATE    CPU_MS  ELAPSED  NAME
 console.log(`[Scheduler] PID ${pid}: running → ready`);
 ```
 
+`src/kernel/Scheduler.ts` の `handleYield()` に実際に挿入する位置:
+
+```typescript
+handleYield(pid: number): void {
+  const pcb = this.table.get(pid);
+  if (!pcb || pcb.state === 'zombie') return;
+  console.log(`[Scheduler] PID ${pid}: running → ready`);  // ← ここに追加
+  pcb.state = 'ready';
+  this.readyQueue.push(pid);
+  this.scheduleNext();
+}
+```
+
+ブラウザの DevTools → Console で `[Scheduler]` のログを確認する。
+
 ### 課題 3-C：優先度付きスケジューリングを実装する
 
 `PCB.priority` フィールドが 0（高）〜19（低）で定義されている。
 現在はラウンドロビンだが、priority が低いプロセスは2回に1回だけ resume するよう改造する。
+
+#### 実装例
+
+`src/kernel/Scheduler.ts` に `skipNext` フィールドを追加し、`scheduleNext()` を改造:
+
+```typescript
+export class Scheduler {
+  // ... 既存フィールド ...
+  private skipNext = new Set<number>();  // 追加
+
+  scheduleNext(): void {
+    const nextPid = this.readyQueue.shift();
+    if (nextPid == null) return;
+    const pcb = this.table.get(nextPid);
+    if (!pcb || pcb.state === 'zombie') { this.scheduleNext(); return; }
+
+    // priority >= 10（低優先度）のプロセスは2回に1回スキップ
+    if (pcb.priority >= 10 && this.skipNext.has(nextPid)) {
+      this.skipNext.delete(nextPid);
+      this.readyQueue.push(nextPid);  // 末尾に戻して次回実行
+      this.scheduleNext();
+      return;
+    }
+    if (pcb.priority >= 10) this.skipNext.add(nextPid);
+
+    pcb.state = 'running';
+    pcb.worker.postMessage({ type: 'resume' } satisfies WorkerMessage);
+  }
+}
+```
+
+> `fork()` で生成されるプロセスは `priority: 10` なので、init（priority: 0）より低優先度として扱われる。
 
 ### 確認ポイント
 
@@ -256,11 +423,35 @@ console.log(`[Scheduler] PID ${pid}: running → ready`);
 ```
 $ free
               total   used   free   pages
-Mem:            64K     4K    60K   1/16
+Mem:            64K     8K    56K   2/16
 ```
 
-`MemoryManager.ts` の `getUsage()` を拡張し、使用ページ数 / 総ページ数も返す。
+`MemoryManager.ts` の `getUsage()` を拡張して使用ページ数 / 総ページ数も返すか、コマンド側で `used / 4096` を計算する。
 コマンド側からは `sys.call(SYS.MEMINFO)` で取得する。
+
+#### 実装例
+
+`getUsage()` はバイト単位で返すので、コマンド側でページ数を計算することもできる:
+
+`src/shell/commands/index.ts` の `free` コマンドを修正:
+
+```typescript
+commands.set('free', async (_args, _stdin, sys) => {
+  const info = await sys.call(SYS.MEMINFO) as { used: number; free: number; total: number };
+  const PAGE_SIZE = 4096;
+  const usedPages  = info.used  / PAGE_SIZE;
+  const totalPages = info.total / PAGE_SIZE;
+  const kb = (n: number) => String(Math.round(n / 1024)) + 'K';
+  return [
+    '              total        used        free   pages',
+    'Mem:  ' +
+      kb(info.total).padStart(12) +
+      kb(info.used).padStart(12) +
+      kb(info.free).padStart(12) +
+      `   ${usedPages}/${totalPages}`,
+  ].join('\n');
+});
+```
 
 ### 課題 4-B：メモリ使用量の可視化コマンド `memmap` を実装する
 
@@ -269,17 +460,76 @@ Mem:            64K     4K    60K   1/16
 ```
 $ memmap
 Page map (16 pages, 4KB each):
-[1][.][.][.][.][.][.][.][.][.][.][.][.][.][.][.]
- ^-- PID 1 使用中  . = 空き
+[1][2][.][.][.][.][.][.][.][.][.][.][.][.][.][.]
+ 1=init  2=shell  .=空き
 ```
 
 `MemoryManager.ts` に `getPageMap()` のような public メソッドを追加し、`Syscall.ts` に `SYS.MEMMAP` を追加してシェルから呼び出す。
 `pageTable` をコマンドから直接参照しない。
 
+#### 実装例
+
+`MemoryManager.ts` に `getPageMap()` を追加:
+
+```typescript
+getPageMap(): number[] {
+  return Array.from(this.pageTable);
+}
+```
+
+`src/kernel/Syscall.ts` に `MEMMAP` を追加:
+
+```typescript
+export enum SYS {
+  // ... 既存 ...
+  MEMMAP  = 16,  // 追加
+}
+
+// dispatch() の switch に追加
+case SYS.MEMMAP: return this.memory.getPageMap();
+```
+
+`src/shell/commands/index.ts` に `memmap` コマンドを追加:
+
+```typescript
+commands.set('memmap', async (_args, _stdin, sys) => {
+  const pages = await sys.call(SYS.MEMMAP) as number[];
+  const cells = pages.map(pid => pid === 0 ? '.' : String(pid)).join('][');
+  return [
+    `Page map (${pages.length} pages, 4KB each):`,
+    '[' + cells + ']',
+    ' . = 空き  数字 = 使用中 PID',
+  ].join('\n');
+});
+```
+
 ### 課題 4-C：大量プロセスを生成して OOM を発生させる
 
 `stress` コマンドを作り、内部で `sys.call(SYS.FORK, 'stress-worker')` を繰り返してメモリが枯渇したときに何が起きるかを観察する。
 `Scheduler.fork()` をコマンドから直接呼び出さない。
+
+#### 実装例
+
+`src/shell/commands/index.ts` に `stress` コマンドを追加:
+
+```typescript
+commands.set('stress', async (args, _stdin, sys) => {
+  const count = parseInt(args[0] ?? '5');
+  if (isNaN(count) || count < 1) throw new Error('stress: invalid count');
+  let spawned = 0;
+  for (let i = 0; i < count; i++) {
+    try {
+      await sys.call(SYS.FORK, 'stress-worker');
+      spawned++;
+    } catch (e) {
+      return `Spawned ${spawned}/${count} workers. OOM: ${(e as Error).message}`;
+    }
+  }
+  return `Spawned ${spawned} workers. Run 'free' or 'memmap' to observe.`;
+});
+```
+
+> 1プロセスあたり 4KB（1ページ）消費。起動時に init と shell で 2 ページ使用済みなので、追加で最大 14 プロセスまで起動できる。`stress 20` で OOM を発生させられる。
 
 ### 確認ポイント
 
@@ -314,6 +564,70 @@ System uptime: 42 ticks (2100ms)
 ```
 
 `InterruptController.ts` に `TIMER` ハンドラーを追加し、`Kernel` でカウンターを管理する。
+
+#### 実装例
+
+`src/kernel/index.ts` に `tickCount` を追加し、タイマー割り込みでカウントアップ:
+
+```typescript
+export class Kernel {
+  // ... 既存フィールド ...
+  private tickCount = 0;
+  getTicks(): number { return this.tickCount; }
+
+  async boot(print: PrintFn): Promise<number> {
+    // ... 既存の初期化処理 ...
+
+    // irq.register を修正してカウンターをインクリメント
+    this.irq.register(InterruptType.TIMER, () => { this.tickCount++; });
+    this.irq.start();
+    // ...
+  }
+}
+```
+
+`src/kernel/Syscall.ts` に `UPTIME` syscall を追加:
+
+```typescript
+// SYS enum に追加
+export enum SYS {
+  // ... 既存 ...
+  UPTIME  = 17,  // MEMMAP=16 を追加済みの場合。未追加なら次の空き番号を使う。
+}
+
+// Syscall のコンストラクターに getTicks を追加
+export class Syscall {
+  constructor(
+    private readonly fs:       FileSystem,
+    private readonly sched:    Scheduler,
+    private readonly memory:   MemoryManager,
+    private readonly getTicks: () => number = () => 0,  // 追加
+  ) {}
+
+  // dispatch() の switch 内に追加
+  private async dispatch(pid: number, num: SYS, args: unknown[]): Promise<unknown> {
+    // ...
+    case SYS.UPTIME: return { ticks: this.getTicks(), ms: this.getTicks() * 50 };
+    // ...
+  }
+}
+```
+
+`src/kernel/index.ts` で `Syscall` 生成時に `getTicks` を渡す:
+
+```typescript
+// constructor() 内
+this.syscall = new Syscall(this.fs, this.sched, this.memory, () => this.tickCount);
+```
+
+`src/shell/commands/index.ts` に `uptime` コマンドを追加:
+
+```typescript
+commands.set('uptime', async (_args, _stdin, sys) => {
+  const info = await sys.call(SYS.UPTIME) as { ticks: number; ms: number };
+  return `System uptime: ${info.ticks} ticks (${info.ms}ms)`;
+});
+```
 
 ### 確認ポイント
 
@@ -362,3 +676,5 @@ System uptime: 42 ticks (2100ms)
 | ページング | ArrayBuffer + pageTable | MMU（メモリ管理ユニット） |
 | ファイルシステム | inode + localStorage | ディスク上の inode テーブル |
 | 割り込み | setInterval | CPU 割り込みベクター |
+
+> **Note:** 通常のユーザープロセスは Web Worker と PCB で管理する。ユーザー入力を扱う Shell UI はブラウザのメインスレッドで動き、PID=2 の shell PCB として `SysHelper` 経由でカーネルへ操作を依頼する。
