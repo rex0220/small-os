@@ -2,9 +2,12 @@
 
 ## はじめに
 
-「OS ってどう動いているの？」と思っても、実際のカーネルコードは難しく、環境構築も大変です。
+Web アプリを書いていると、プロセス、メモリ、ファイル、権限、システムコールといった言葉に出会います。
 
-**small OS** は TypeScript + Vite で実装した、**ブラウザーだけで動く OS シミュレーター**です。  
+でも、普段はブラウザや Node.js、フレームワークの上で開発しているため、OS が何を管理しているのかを実感する機会はあまり多くありません。
+
+**small OS** は TypeScript + Vite で実装した、**ブラウザー上で動作する OS シミュレーター**です。  
+そうした OS の基本概念を、使い慣れた TypeScript とブラウザ API で小さく再現しています。  
 OS 専用のエミュレーターや仮想マシンは不要で、Node.js 環境があればすぐに体験できます。
 
 > **注意**：small OS はブート可能な実 OS ではありません。OS の基本概念をブラウザ上で学ぶためのシミュレーターです。
@@ -389,13 +392,13 @@ src/
 | Module 4 | メモリを枯渇させる | ページング・断片化・OOM |
 | Module 5 | 割り込みを止めてみる | 割り込み駆動・タイマー割り込み |
 
-詳細は [./learning-plan.md](https://github.com/rex0220/small-os/blob/main/docs/learning-plan.md) を参照してください。
+詳細は [docs//learning-plan.md](https://github.com/rex0220/small-os/blob/main/docs/learning-plan.md) を参照してください。
 
 ## おわりに
 
 small OS は「OS の概念を体験的に学ぶ」ことを目的に作りました。
 
-実際の Linux カーネルは数百万行のコードですが、small OS は **TypeScript 数百行**で同じ概念を体験できます。ブラウザだけで動くので、環境構築の壁なしにすぐ触り始められます。
+実際の Linux カーネルは数百万行のコードですが、small OS は **TypeScript 約 1,200 行**のコンパクトなコードベースで同じ概念を体験できます。使い慣れた TypeScript で読める・変えられる・壊せる設計になっています。
 
 コードは GitHub で公開しています。Issue や PR も歓迎です。
 
