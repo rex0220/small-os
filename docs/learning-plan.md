@@ -53,6 +53,29 @@ await sys.call(SYS.CLOSE, fd);
 
 ---
 
+## セットアップ：コードを取得して起動する
+
+### GitHub からコードを取得する
+
+```bash
+# リポジトリをクローン
+git clone https://github.com/rex0220/small-os.git
+cd small-os
+
+# 依存パッケージをインストール
+npm install
+```
+
+### 起動確認
+
+```bash
+npm run dev
+```
+
+ブラウザで `http://localhost:5173` を開くと small OS のターミナルが表示される。
+
+---
+
 ## Module 0：環境確認・全体把握
 
 **目標**: small OS を起動し、全コマンドを触ってソースの構造を把握する
