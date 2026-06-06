@@ -389,7 +389,7 @@ src/
 | Module 4 | メモリを枯渇させる | ページング・断片化・OOM |
 | Module 5 | 割り込みを止めてみる | 割り込み駆動・タイマー割り込み |
 
-詳細は [docs/learning-plan.md](./learning-plan.md) を参照してください。
+詳細は [./learning-plan.md](https://github.com/rex0220/small-os/blob/main/docs/learning-plan.md) を参照してください。
 
 ## おわりに
 
