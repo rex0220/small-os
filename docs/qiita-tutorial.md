@@ -5,7 +5,11 @@
 「OS ってどう動いているの？」と思っても、実際のカーネルコードは難しく、環境構築も大変です。
 
 **small OS** は TypeScript + Vite で実装した、**ブラウザーだけで動く OS シミュレーター**です。  
-インストール不要、環境構築ゼロで、以下の OS の基本概念をハンズオンで体験できます。
+OS 専用のエミュレーターや仮想マシンは不要で、Node.js 環境があればすぐに体験できます。
+
+> **注意**：small OS はブート可能な実 OS ではありません。OS の基本概念をブラウザ上で学ぶためのシミュレーターです。
+
+以下の OS の基本概念をハンズオンで体験できます。
 
 - プロセス管理・スケジューリング
 - ファイルシステム（inode）
@@ -14,6 +18,14 @@
 - 割り込み制御
 
 **動くコードを触りながら理解する**設計になっています。
+
+この記事で学べること：
+
+- システムコールがなぜ必要か
+- inode とファイル名の関係
+- PCB とプロセス状態遷移
+- ページングの超小型モデル
+- ブラウザ API で OS 概念をどう模擬できるか
 
 ## デモ
 
@@ -35,6 +47,8 @@ Mem:            64K     8K    56K
 ```
 
 リロードしても `readme.txt` が残ります（localStorage に永続化）。
+
+![screenshot.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/100572/09b89062-8778-4845-afe6-4b475be87f73.png)
 
 ## セットアップ
 
@@ -61,7 +75,7 @@ npm run dev
 │  Scheduler │  MemoryMgr  │  FileSystem   │
 │  (PCB/RR)  │  (64KB/4KB) │  (inode/VFS)  │
 │  └─────────┴─────────────┴─────────────┘ │
-│  InterruptController (setInterval 10ms)   │
+│  InterruptController (setInterval 50ms)   │
 ├───────────────────────────────────────────┤
 │  ハードウェア抽象層（ブラウザー API）       │
 │  setTimeout / setInterval / localStorage  │
@@ -75,7 +89,7 @@ npm run dev
 | コンテキストスイッチ | `yield` / `resume` メッセージ |
 | ページング | ArrayBuffer 64KB ÷ 4KB ページ |
 | ファイルシステム | inode + localStorage |
-| タイマー割り込み | `setInterval`（10ms） |
+| タイマー割り込み | `setInterval`（50ms） |
 
 ## チュートリアル
 
@@ -86,7 +100,8 @@ npm run dev
 ```bash
 help                     # コマンド一覧
 pwd                      # カレントディレクトリ
-mkdir test && cd test    # ディレクトリ作成・移動
+mkdir test               # ディレクトリ作成
+cd test                  # ディレクトリ移動
 touch memo.txt           # ファイル作成
 echo "hello OS" > memo.txt
 cat memo.txt             # hello OS
@@ -153,7 +168,7 @@ $ wc test.txt
 
 `src/kernel/FileSystem.ts` を開いてみましょう。
 
-Linux の本物の ext4 と同じ構造を持っています。
+Linux の ext4 などでも使われる inode の考え方を、学習用にかなり小さく単純化して実装しています。
 
 ```
 ディレクトリエントリ  →  inode  →  データ
@@ -255,7 +270,9 @@ Worker → postMessage({ type: "yield" })   // タイムスライス消費
        ← postMessage({ type: "resume" })  // 次のターンが来た
 ```
 
-`setInterval(10ms)` のタイマー割り込みで `Scheduler.tick()` が呼ばれ、ラウンドロビンで次のプロセスへ切り替わります。実 OS の**コンテキストスイッチ**に相当します。
+small OS では各 Worker が処理の区切りで `yield` メッセージを送り、Scheduler が次のプロセスに `resume` を返すことで**協調的**に切り替わります。実 OS のコンテキストスイッチに相当します。
+
+`InterruptController`（50ms タイマー）はスケジューリングの主経路ではなく、割り込み駆動の拡張用として用意されています（Step 6 参照）。
 
 #### 課題：シェルプロセスを kill して何が起きるか確認する
 
@@ -314,12 +331,13 @@ Page map (16 pages, 4KB each):
 // this.irq.start();  // ← コメントアウト
 ```
 
-タイマー割り込みが止まるとスケジューラーの `tick()` が呼ばれなくなります。  
-何が変わるか（変わらないか）を観察してみてください。
+現時点では TIMER ハンドラーは空（`() => {}`）なので、`irq.start()` を止めてもコマンド実行や協調スケジューリングへの影響はありません。
+
+これは「割り込みコントローラーを拡張する入口」として設計されています。次の課題でハンドラーを実装してみましょう。
 
 **考察のポイント：**
 - ポーリング方式（`while(true)` でチェック）と割り込み方式の違いは？
-- タイマーなしでもコマンドは動くのか？なぜ？
+- タイマーハンドラーを実装するとどんな機能が作れるか？
 
 ---
 
