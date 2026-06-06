@@ -46,6 +46,14 @@ $ free
 Mem:            64K     8K    56K
 ```
 
+パイプも使えます。
+
+```
+$ echo "hello world" > test.txt
+$ cat test.txt | echo
+hello world
+```
+
 リロードしても `readme.txt` が残ります（localStorage に永続化）。
 
 ![screenshot.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/100572/09b89062-8778-4845-afe6-4b475be87f73.png)
@@ -82,14 +90,14 @@ npm run dev
 └───────────────────────────────────────────┘
 ```
 
-| 実 OS の概念 | small OS での実装 |
-|---|---|
-| CPU 特権モード（Ring 0/3） | Syscall.ts による境界 |
-| プロセス | Web Worker + PCB |
-| コンテキストスイッチ | `yield` / `resume` メッセージ |
-| ページング | ArrayBuffer 64KB ÷ 4KB ページ |
-| ファイルシステム | inode + localStorage |
-| タイマー割り込み | `setInterval`（50ms） |
+| 実 OS の概念 | small OS での実装 | 備考 |
+|---|---|---|
+| CPU 特権モード（Ring 0/3） | Syscall.ts による境界 | ユーザー空間からカーネル空間へのアクセス制限 |
+| プロセス | Web Worker + PCB | スレッドの独立性を利用 |
+| コンテキストスイッチ | `yield` / `resume` メッセージ | メッセージ駆動による協調的マルチタスク |
+| ページング（メモリ管理） | ArrayBuffer 64KB ÷ 4KB | 固定長ページによるアロケーションの模擬 |
+| ファイルシステム | inode + localStorage | データの永続化 |
+| タイマー割り込み | `setInterval`（50ms） | 拡張用の骨組みとして用意 |
 
 ## チュートリアル
 
@@ -131,6 +139,9 @@ commands.set('cat', async (args, sys) => {
 
 `sys.call(SYS.XXX, ...)` がシステムコールです。ユーザー空間（コマンド）からカーネルへの**唯一の入口**です。  
 実 OS で言えば `syscall` 命令に相当します。
+
+**なぜ Syscall を経由しなければいけないのか？**  
+コマンドがメモリや他のプロセスのファイルを直接触れてしまうと、悪意あるプログラムが他のプロセスを破壊できてしまいます。カーネルが門番（Syscall）として立ち、許可された操作だけを代行することで、プロセス間の安全性と隔離を保証しています。これが OS における**ユーザー空間 / カーネル空間の分離**の本質です。
 
 #### 課題：`date` コマンドを追加する
 
@@ -270,9 +281,9 @@ Worker → postMessage({ type: "yield" })   // タイムスライス消費
        ← postMessage({ type: "resume" })  // 次のターンが来た
 ```
 
-small OS では各 Worker が処理の区切りで `yield` メッセージを送り、Scheduler が次のプロセスに `resume` を返すことで**協調的**に切り替わります。実 OS のコンテキストスイッチに相当します。
+Web Worker はブラウザ上で真に並行動作するスレッドですが、small OS ではあえてその上に**協調的マルチタスク**を実装しています。各 Worker が処理の区切りで `yield` を送り、Scheduler が `resume` を返すことでコンテキストスイッチを模擬します。
 
-`InterruptController`（50ms タイマー）はスケジューリングの主経路ではなく、割り込み駆動の拡張用として用意されています（Step 6 参照）。
+実 OS でのタイマー割り込みによる**強制的なプリエンプション**をブラウザ上で厳密に再現するのは難しいため、この「割り切り」を採用しています。`InterruptController`（50ms タイマー）はその拡張用の骨組みとして用意されています（Step 6 参照）。
 
 #### 課題：シェルプロセスを kill して何が起きるか確認する
 
@@ -294,7 +305,7 @@ $ free
 Mem:            64K     8K    56K
 ```
 
-仮想メモリは **64KB / 4KB ページ × 16 枚**です。  
+物理メモリ全体を **64KB / 4KB ページ × 16 枚**に分割して管理します。  
 スワップはありません。メモリが足りなくなると `ENOMEM` エラーになります。
 
 #### メモリ管理の実装
@@ -302,11 +313,12 @@ Mem:            64K     8K    56K
 ```typescript
 // MemoryManager.ts の概念
 class MemoryManager {
-  private buffer = new ArrayBuffer(64 * 1024);  // 64KB
-  private pageTable: (number | null)[] = new Array(16).fill(null);
-  // pageTable[i] = PID（使用中）または null（空き）
+  private pool = new ArrayBuffer(64 * 1024);       // 64KB の共有メモリプール
+  private pageTable = new Uint8Array(16);          // pageTable[i] = PID（0=空き）
 }
 ```
+
+> **Note:** これはプロセスごとに独立したアドレス空間を持つ「仮想メモリ」ではなく、物理ページを PID に割り当てる**固定長ページアロケーション**です。プロセス間のメモリ分離は Web Worker のスレッド分離に依存しています。
 
 #### 課題：`memmap` コマンドを実装してページマップを表示する
 
@@ -338,6 +350,8 @@ Page map (16 pages, 4KB each):
 **考察のポイント：**
 - ポーリング方式（`while(true)` でチェック）と割り込み方式の違いは？
 - タイマーハンドラーを実装するとどんな機能が作れるか？
+
+**発展課題：** タイマーごとにプロセスの `cpuTime` をインクリメントし、一定時間を超えたら強制的に別プロセスへ切り替える（**プリエンプティブ・スケジューリング**）を実装してみてください。現在の協調方式との挙動の違いが体感できます。
 
 ---
 
